@@ -110,3 +110,80 @@ python today.py
 ```bash
 python today.py --date 2026-06-21
 ```
+
+---
+
+## プロパティ（属性）の追加とサマリーへの出力方法
+
+タスクに新しいプロパティ（例：期限を示す `[due:: 2026-07-15]` など）を追加し、それを週報サマリー（`summarize.py`）に出力させたい場合は、以下の3ステップでカスタマイズを行います。
+
+### 1. デイリーノートにプロパティを記述する
+Dataview形式 `[キー:: 値]` でタスク行の末尾に追記します。
+```markdown
+- [ ] 英語論文の執筆開始 [category:: 研] [priority:: A] [due:: 2026-07-15]
+```
+※ `today.py` は、この段階で自動的に新しいプロパティも丸ごと翌日へ引き継ぐようになっています（追加の修正は不要です）。
+
+### 2. `summarize.py` でプロパティをパースする
+[summarize.py](file:///Users/magmag/Desktop/Program/git/WeeklyReportWithObsidian/summarize.py) 内の `parse_daily_notes` 関数で、新しいプロパティを正規表現で抽出します。
+
+```python
+# 例：dueプロパティをパースする処理を追加
+due_date = None
+due_match = re.search(r"\[due::\s*([^\]]+)\]", raw_content)
+if due_match:
+    due_date = due_match.group(1).strip()
+```
+
+抽出した値を、辞書 `last_task` に格納します。
+```python
+last_task = {
+    "is_completed": is_completed,
+    "category": category,
+    "content": content,
+    "date": date_str,
+    "reasons": [],
+    "due": due_date  # 格納する
+}
+```
+
+### 3. `summarize.py` でデータを引き継ぎ、サマリーに出力する
+
+#### マージ処理への追加 (`merge_tasks` 関数)
+集計時にデータが消えないよう、マージ処理部分でプロパティを引き継ぎます。
+```python
+# merge_tasks 関数内
+for t in parsed_tasks:
+    key = (t["is_completed"], t["category"], t["content"])
+    if key not in merged:
+        keys.append(key)
+        merged[key] = {
+            "dates": [],
+            "reasons": [],
+            "due": t.get("due")  # 引き継ぐ
+        }
+```
+辞書配列へのアペンド部分にも追加します。
+```python
+tasks[status_key][category].append({
+    "content": content,
+    "dates": sorted_dates,
+    "reasons": merged[key]["reasons"],
+    "due": merged[key]["due"]  # 追加
+})
+```
+
+#### サマリー出力フォーマットへの追加 (`generate_summary_markdown` 関数)
+`format_task_line` 内で、サマリーにどう出力するかを定義します。
+```python
+# generate_summary_markdown 関数内
+def format_task_line(t):
+    dates_str = ", ".join(t["dates"])
+    line = f"- {t['content']} ({dates_str})"
+    if t.get("due"):
+        line += f" [期限：{t['due']}]"  # 期限があれば出力に加える
+    if t["reasons"]:
+        reasons_str = "、".join(t["reasons"])
+        line += f" (理由：{reasons_str})"
+    return line
+```
