@@ -31,12 +31,28 @@ def find_previous_note(daily_note_path, target_date, max_lookup_days=30):
         current_date -= timedelta(days=1)
     return None, None
 
+def clean_task_content(task_line):
+    """タスクの行からチェックボックス記号やDataviewのインラインフィールドを除去し、純粋なタスク名を取得する"""
+    # 1. チェックボックス表記の除去 (例: "- [ ] タスク名" や "- [x] タスク名")
+    match = re.match(r"^\s*-\s*(?:\[[ xX/]\])?\s*(.*)$", task_line)
+    if not match:
+        return task_line.strip()
+    
+    content = match.group(1).strip()
+    
+    # 2. Dataview のインラインフィールド ([key:: value]) を除去
+    # 括弧で囲まれた部分（[key:: value]）を空文字列に置換
+    content_cleaned = re.sub(r"\[[^\]]+::[^\]]+\]", "", content)
+    return content_cleaned.strip()
+
 def extract_uncompleted_tasks(filepath):
     """指定されたファイルから未達成のタスク（箇条書き行）を抽出する"""
     uncompleted_tasks = []
     
-    # 理由行の判定用 (転記から除外するため)
+    # 理由行の判定用 (転記から除外するため、念のため残す)
     reason_pattern = re.compile(r"^\s*->\s*(.*)$")
+    # チェックボックス行の判定 (例: - [ ] タスク名, - [x] タスク名, - [/] タスク名)
+    task_pattern = re.compile(r"^\s*-\s*\[([ xX/])\]\s*(.*)$")
     
     with open(filepath, "r", encoding="utf-8") as f:
         for line in f:
@@ -47,14 +63,15 @@ def extract_uncompleted_tasks(filepath):
             if not line_clean or reason_pattern.match(line_clean) or line_clean.startswith("#"):
                 continue
                 
-            # 箇条書き行の判定 (先頭がハイフン)
-            if line_clean.startswith("-"):
-                # 完了マーク(~~)が含まれていない場合のみ未達成とする
-                if "~~" not in line_clean:
-                    # 箇条書きのテキストを標準化して保存
-                    content = line_clean.lstrip("-").strip()
-                    if content:
-                        uncompleted_tasks.append(f"- {content}")
+            # チェックボックス行の判定
+            task_match = task_pattern.match(line_clean)
+            if task_match:
+                status = task_match.group(1)
+                content = task_match.group(2).strip()
+                
+                # 完了（x, X）以外のものを未達成として抽出する
+                if status not in ("x", "X") and content:
+                    uncompleted_tasks.append(f"- [ ] {content}")
                         
     return uncompleted_tasks
 
@@ -65,7 +82,7 @@ def write_tasks_to_today(filepath, new_tasks):
         return False
 
     lines = []
-    existing_task_contents = set()
+    existing_task_names = set()
     
     if os.path.exists(filepath):
         with open(filepath, "r", encoding="utf-8") as f:
@@ -74,16 +91,17 @@ def write_tasks_to_today(filepath, new_tasks):
         # 既存タスクの抽出（重複チェック用）
         for line in lines:
             line_clean = line.strip()
+            # 箇条書き行であるかつ理由行でない場合
             if line_clean.startswith("-") and not line_clean.startswith("->"):
-                content = line_clean.lstrip("-").replace("~~", "").strip()
-                if content:
-                    existing_task_contents.add(content)
+                cleaned = clean_task_content(line_clean)
+                if cleaned:
+                    existing_task_names.add(cleaned)
     
     # 重複していないタスクのみをフィルタリング
     tasks_to_insert = []
     for task in new_tasks:
-        content = task.lstrip("-").replace("~~", "").strip()
-        if content not in existing_task_contents:
+        cleaned = clean_task_content(task)
+        if cleaned not in existing_task_names:
             tasks_to_insert.append(task)
         else:
             print(f"重複スキップ: {task}")
@@ -101,18 +119,11 @@ def write_tasks_to_today(filepath, new_tasks):
             break
             
     if heading_idx != -1:
-        # 見出しが見つかった場合、その直後に挿入する
-        # 既存の改行状態を考慮し、見出し行の次に空行を挟むか、直接タスクを並べるか
-        # 既存のファイルの書き方に合わせるため、単純に見出し行の次のインデックスに挿入する
         insert_index = heading_idx + 1
-        
-        # 挿入する行リストを作成
         insert_lines = [task + "\n" for task in tasks_to_insert]
         lines[insert_index:insert_index] = insert_lines
         print(f"既存のノートに {len(tasks_to_insert)} 件のタスクを挿入しました。")
     else:
-        # 見出しが見つからない、または新規ファイルの場合
-        # ファイルの先頭に `# 本日の予定` を作成して挿入
         insert_lines = ["# 本日の予定\n"] + [task + "\n" for task in tasks_to_insert] + ["\n"]
         lines = insert_lines + lines
         print(f"新規セクションを作成し、{len(tasks_to_insert)} 件のタスクを書き込みました。")

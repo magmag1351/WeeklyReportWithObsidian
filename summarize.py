@@ -29,9 +29,9 @@ def get_date_input(prompt):
 def parse_daily_notes(daily_note_path, start_date, end_date):
     parsed_tasks = []
     
-    # 箇条書き行の判定 (インデント付きのハイフンリストも考慮)
-    list_pattern = re.compile(r"^\s*-\s*(.*)$")
-    # 理由行の判定
+    # チェックボックス行の判定 (例: - [ ] タスク名, - [x] タスク名, - [/] タスク名)
+    task_pattern = re.compile(r"^\s*-\s*\[([ xX/])\]\s*(.*)$")
+    # 理由行の判定 (後方互換性・手書きの補足メモ用)
     reason_pattern = re.compile(r"^\s*->\s*(.*)$")
 
     current_date = start_date
@@ -51,31 +51,35 @@ def parse_daily_notes(daily_note_path, start_date, end_date):
                         # 未達成タスクのみ理由を記録
                         if last_task and not last_task["is_completed"]:
                             reason_content = reason_match.group(1).strip()
-                            if reason_content:
+                            if reason_content and reason_content not in last_task["reasons"]:
                                 last_task["reasons"].append(reason_content)
                     else:
-                        # リストアイテムチェック
-                        list_match = list_pattern.match(line_str)
-                        if list_match:
-                            content = list_match.group(1).strip()
+                        # チェックボックス行チェック
+                        task_match = task_pattern.match(line_str)
+                        if task_match:
+                            status = task_match.group(1)
+                            raw_content = task_match.group(2).strip()
                             
-                            # 完了マーカーのチェック
-                            is_completed = False
-                            if content.startswith("~~"):
-                                is_completed = True
-                                content = content[2:].strip()
-                                
-                            # カテゴリのチェック
+                            is_completed = status in ("x", "X")
+                            
+                            # カテゴリのパース [category:: ...]
                             category = "unclassified"
-                            if content.startswith("【研】"):
-                                category = "research"
-                                content = content[3:].strip()
-                            elif content.startswith("【私】"):
-                                category = "private"
-                                content = content[3:].strip()
+                            category_match = re.search(r"\[category::\s*([^\]]+)\]", raw_content)
+                            if category_match:
+                                cat_val = category_match.group(1).strip()
+                                if cat_val in ("研", "research"):
+                                    category = "research"
+                                elif cat_val in ("私", "private"):
+                                    category = "private"
+                                    
+                            # メモのパース [memo:: ...]
+                            memo_content = None
+                            memo_match = re.search(r"\[memo::\s*([^\]]+)\]", raw_content)
+                            if memo_match:
+                                memo_content = memo_match.group(1).strip()
                                 
-                            # 末尾の~~を除去
-                            content = content.rstrip("~").strip()
+                            # Dataview のインラインフィールド ([key:: value]) を除去した純粋なタスク名を取得
+                            content = re.sub(r"\[[^\]]+::[^\]]+\]", "", raw_content).strip()
                             
                             if content: # 空行は無視
                                 last_task = {
@@ -85,6 +89,8 @@ def parse_daily_notes(daily_note_path, start_date, end_date):
                                     "date": date_str,
                                     "reasons": []
                                 }
+                                if memo_content:
+                                    last_task["reasons"].append(memo_content)
                                 parsed_tasks.append(last_task)
                                 
         current_date += timedelta(days=1)
