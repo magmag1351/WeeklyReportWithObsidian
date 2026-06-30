@@ -1,1 +1,3 @@
-./test_resource/
+test_resource/
+output/
+__pycache__/

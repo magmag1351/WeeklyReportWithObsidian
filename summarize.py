@@ -127,8 +127,18 @@ def merge_tasks(parsed_tasks):
         }
     }
     
+    # 期間内に達成されたタスクの集合を作成 (カテゴリと内容のペア)
+    completed_set = set(
+        (category, content) for (is_completed, category, content) in keys if is_completed
+    )
+    
     for key in keys:
         is_completed, category, content = key
+        
+        # 期間内に達成済みのタスクが未達成リストにもある場合は、未達成側では無視する
+        if not is_completed and (category, content) in completed_set:
+            continue
+            
         status_key = "completed" if is_completed else "uncompleted"
         
         # 日付は昇順でソート
