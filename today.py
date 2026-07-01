@@ -77,14 +77,24 @@ def extract_uncompleted_tasks(filepath):
 
 def write_tasks_to_today(filepath, new_tasks):
     """本日（ターゲット日）のノートファイルにタスクを書き込む。重複はスキップする。"""
+    file_exists = os.path.exists(filepath)
+
     if not new_tasks:
-        print("転記する未達成タスクはありません。")
-        return False
+        if not file_exists:
+            # 転記するタスクが0件だが、本日のノートが存在しない場合は最低限のテンプレートを作成
+            print("転記する未達成タスクはありませんが、本日のノートを新規テンプレートで作成します。")
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write("# 本日の予定\n\n")
+            return True
+        else:
+            print("転記する未達成タスクはなく、本日のノートは既に存在します。")
+            return False
 
     lines = []
     existing_task_names = set()
     
-    if os.path.exists(filepath):
+    if file_exists:
         with open(filepath, "r", encoding="utf-8") as f:
             lines = f.readlines()
             
@@ -107,9 +117,18 @@ def write_tasks_to_today(filepath, new_tasks):
             print(f"重複スキップ: {task}")
             
     if not tasks_to_insert:
-        print("すべてのタスクが既に本日のノートに存在するため、転記をスキップします。")
-        return False
-        
+        if not file_exists:
+            # タスクはあるがすべて重複していた（通常はあり得ないが、ファイルが存在しない場合）
+            # 最低限のテンプレートを作成
+            print("転記するタスクはありませんが、本日のノートを新規テンプレートで作成します。")
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write("# 本日の予定\n\n")
+            return True
+        else:
+            print("すべてのタスクが既に本日のノートに存在するため、転記をスキップします。")
+            return False
+            
     # `# 本日の予定` または `# 本日行うこと` 見出しを検索
     heading_pattern = re.compile(r"^#+\s+(本日の予定|本日行うこと)\s*$")
     heading_idx = -1
@@ -134,6 +153,7 @@ def write_tasks_to_today(filepath, new_tasks):
         f.writelines(lines)
         
     return True
+
 
 def main():
     parser = argparse.ArgumentParser(description="直前の未達成タスクを本日のデイリーノートに転記するプログラム")
