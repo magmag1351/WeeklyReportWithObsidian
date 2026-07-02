@@ -26,6 +26,54 @@ def get_date_input(prompt):
                 pass
         print("正しい日付形式（例: 20260629 または 2026-06-29）で入力してください。")
 
+def parse_time_field(time_str):
+    """[time:: ...] の値をパースして『分』単位の整数に変換する"""
+    if not time_str:
+        return 0
+    time_str = time_str.strip().lower()
+    
+    # 複合パターンのチェック (例: 1h30m, 1時間30分)
+    compound_match = re.match(r'^(\d+(?:\.\d+)?)\s*(?:h|hour|時間|hr)\s*(\d+(?:\.\d+)?)\s*(?:m|min|minute|分)?$', time_str)
+    if compound_match:
+        hours = float(compound_match.group(1))
+        minutes = float(compound_match.group(2))
+        return int(hours * 60 + minutes)
+        
+    # 単一単位のチェック
+    # 時間単位
+    hour_match = re.match(r'^(\d+(?:\.\d+)?)\s*(?:h|hour|時間|hr)$', time_str)
+    if hour_match:
+        return int(float(hour_match.group(1)) * 60)
+        
+    # 分単位
+    minute_match = re.match(r'^(\d+(?:\.\d+)?)\s*(?:m|min|minute|分)$', time_str)
+    if minute_match:
+        return int(float(minute_match.group(1)))
+        
+    # 単位なしの数値
+    try:
+        val = float(time_str)
+        # 小数点があれば時間、整数なら分とみなす
+        if '.' in time_str:
+            return int(val * 60)
+        else:
+            return int(val)
+    except ValueError:
+        return 0
+
+def format_minutes(minutes):
+    """分を『◯時間◯分』や『◯分』といった読みやすい文字列にフォーマットする"""
+    if not minutes or minutes <= 0:
+        return ""
+    h = int(minutes // 60)
+    m = int(minutes % 60)
+    if h > 0 and m > 0:
+        return f"{h}時間{m}分"
+    elif h > 0:
+        return f"{h}時間"
+    else:
+        return f"{m}分"
+
 def parse_daily_notes(daily_note_path, start_date, end_date):
     parsed_tasks = []
     
@@ -78,6 +126,12 @@ def parse_daily_notes(daily_note_path, start_date, end_date):
                             if memo_match:
                                 memo_content = memo_match.group(1).strip()
                                 
+                            # 消費時間のパース [time:: ...]
+                            time_value = 0
+                            time_match = re.search(r"\[time::\s*([^\]]+)\]", raw_content)
+                            if time_match:
+                                time_value = parse_time_field(time_match.group(1))
+
                             # Dataview のインラインフィールド ([key:: value]) を除去した純粋なタスク名を取得
                             content = re.sub(r"\[[^\]]+::[^\]]+\]", "", raw_content).strip()
                             
@@ -87,7 +141,8 @@ def parse_daily_notes(daily_note_path, start_date, end_date):
                                     "category": category,
                                     "content": content,
                                     "date": date_str,
-                                    "reasons": []
+                                    "reasons": [],
+                                    "time": time_value
                                 }
                                 if memo_content:
                                     last_task["reasons"].append(memo_content)
@@ -99,18 +154,24 @@ def parse_daily_notes(daily_note_path, start_date, end_date):
 
 def merge_tasks(parsed_tasks):
     # 重複マージ処理用の辞書
-    # キー: (is_completed, category, content)
+    # キー: (category, content)
     keys = []
     merged = {}
     
     for t in parsed_tasks:
-        key = (t["is_completed"], t["category"], t["content"])
+        key = (t["category"], t["content"])
         if key not in merged:
             keys.append(key)
             merged[key] = {
                 "dates": [],
-                "reasons": []
+                "reasons": [],
+                "total_time": 0,
+                "is_completed": False
             }
+        # 期間中に一度でも完了（is_completed が True）していれば完了とする
+        if t["is_completed"]:
+            merged[key]["is_completed"] = True
+            
         # 重複日付を排除して追加
         if t["date"] not in merged[key]["dates"]:
             merged[key]["dates"].append(t["date"])
@@ -118,6 +179,8 @@ def merge_tasks(parsed_tasks):
         for r in t["reasons"]:
             if r not in merged[key]["reasons"]:
                 merged[key]["reasons"].append(r)
+        # 時間を加算
+        merged[key]["total_time"] += t.get("time", 0)
                 
     # 出力用の構造に整理
     tasks = {
@@ -133,27 +196,20 @@ def merge_tasks(parsed_tasks):
         }
     }
     
-    # 期間内に達成されたタスクの集合を作成 (カテゴリと内容のペア)
-    completed_set = set(
-        (category, content) for (is_completed, category, content) in keys if is_completed
-    )
-    
     for key in keys:
-        is_completed, category, content = key
+        category, content = key
+        m_task = merged[key]
         
-        # 期間内に達成済みのタスクが未達成リストにもある場合は、未達成側では無視する
-        if not is_completed and (category, content) in completed_set:
-            continue
-            
-        status_key = "completed" if is_completed else "uncompleted"
+        status_key = "completed" if m_task["is_completed"] else "uncompleted"
         
         # 日付は昇順でソート
-        sorted_dates = sorted(merged[key]["dates"])
+        sorted_dates = sorted(m_task["dates"])
         
         tasks[status_key][category].append({
             "content": content,
             "dates": sorted_dates,
-            "reasons": merged[key]["reasons"]
+            "reasons": m_task["reasons"],
+            "total_time": m_task["total_time"]
         })
         
     return tasks
@@ -168,9 +224,16 @@ def generate_summary_markdown(tasks, start_date, end_date):
     def format_task_line(t):
         dates_str = ", ".join(t["dates"])
         line = f"- {t['content']} ({dates_str})"
+        
+        # 時間があれば出力
+        if t.get("total_time", 0) > 0:
+            time_str = format_minutes(t["total_time"])
+            if time_str:
+                line += f" (時間：{time_str})"
+                
         if t["reasons"]:
             reasons_str = "、".join(t["reasons"])
-            line += f" (理由：{reasons_str})"
+            line += f" (reason：{reasons_str})" if "reason" in line else f" (理由：{reasons_str})"
         return line
 
     def render_category_section(title, task_list):

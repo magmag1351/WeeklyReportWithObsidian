@@ -71,7 +71,11 @@ def extract_uncompleted_tasks(filepath):
                 
                 # 完了（x, X）以外のものを未達成として抽出する
                 if status not in ("x", "X") and content:
-                    uncompleted_tasks.append(f"- [ ] {content}")
+                    # [time:: ...] プロパティを除去して転記する (翌日に時間を引き継がないため)
+                    content_cleaned = re.sub(r"\[time::\s*[^\]]+\]", "", content).strip()
+                    # 連続するスペースや余分なスペースをトリム
+                    content_cleaned = re.sub(r"\s+", " ", content_cleaned)
+                    uncompleted_tasks.append(f"- [ ] {content_cleaned}")
                         
     return uncompleted_tasks
 
