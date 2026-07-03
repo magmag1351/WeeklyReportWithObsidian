@@ -2,6 +2,7 @@ import os
 import json
 import re
 import argparse
+import platform
 from datetime import datetime, timedelta
 
 def load_config(config_path="config.json"):
@@ -9,6 +10,27 @@ def load_config(config_path="config.json"):
         raise FileNotFoundError(f"Config file not found: {config_path}")
     with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+def resolve_paths(config):
+    """OSを判定し、configから適切なパスを解決して返す。
+    macOSの場合は `_mac` サフィックスのキーを優先し、
+    またパス先頭の `~` をユーザーのホームディレクトリに展開する。
+    """
+    system = platform.system()
+    
+    if system == "Darwin": # macOS
+        daily_note_path = config.get("daily_note_path_mac") or config.get("daily_note_path")
+        output_path = config.get("output_path_mac") or config.get("output_path")
+    else: # Windowsなど
+        daily_note_path = config.get("daily_note_path")
+        output_path = config.get("output_path")
+        
+    if daily_note_path:
+        daily_note_path = os.path.expanduser(daily_note_path)
+    if output_path:
+        output_path = os.path.expanduser(output_path)
+        
+    return daily_note_path, output_path
 
 def parse_date(date_str):
     """YYYYMMDD または YYYY-MM-DD 形式の日付文字列を datetime オブジェクトに変換する"""
@@ -178,7 +200,9 @@ def main():
         print(f"設定ファイルの読み込みに失敗しました: {e}")
         return
 
-    daily_note_path = config.get("daily_note_path", "./test_resource")
+    daily_note_path, _ = resolve_paths(config)
+    if not daily_note_path:
+        daily_note_path = "./test_resource"
     
     print(f"対象日付: {target_date_str}")
     

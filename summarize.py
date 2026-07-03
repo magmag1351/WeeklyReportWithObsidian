@@ -2,6 +2,7 @@ import os
 import json
 import re
 import argparse
+import platform
 from datetime import datetime, timedelta
 
 def load_config(config_path="config.json"):
@@ -9,6 +10,27 @@ def load_config(config_path="config.json"):
         raise FileNotFoundError(f"Config file not found: {config_path}")
     with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+def resolve_paths(config):
+    """OSを判定し、configから適切なパスを解決して返す。
+    macOSの場合は `_mac` サフィックスのキーを優先し、
+    またパス先頭の `~` をユーザーのホームディレクトリに展開する。
+    """
+    system = platform.system()
+    
+    if system == "Darwin": # macOS
+        daily_note_path = config.get("daily_note_path_mac") or config.get("daily_note_path")
+        output_path = config.get("output_path_mac") or config.get("output_path")
+    else: # Windowsなど
+        daily_note_path = config.get("daily_note_path")
+        output_path = config.get("output_path")
+        
+    if daily_note_path:
+        daily_note_path = os.path.expanduser(daily_note_path)
+    if output_path:
+        output_path = os.path.expanduser(output_path)
+        
+    return daily_note_path, output_path
 
 def get_date_input(prompt):
     while True:
@@ -270,8 +292,11 @@ def main():
         print(f"設定ファイルの読み込みに失敗しました: {e}")
         return
 
-    daily_note_path = config.get("daily_note_path", "./test_resource")
-    output_path = config.get("output_path", "./output")
+    daily_note_path, output_path = resolve_paths(config)
+    if not daily_note_path:
+        daily_note_path = "./test_resource"
+    if not output_path:
+        output_path = "./output"
     
     print("--- 週報サマリー作成プログラム ---")
     
